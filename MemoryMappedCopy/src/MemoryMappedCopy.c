@@ -1,9 +1,10 @@
 /*
  ============================================================================
  Name        : MemoryMappedCopy.c
- Author      : W. Schilling
+ Author      : Michael Kerrisk, comments completed by W. Schilling
  Version     :
- Copyright   : Your copyright notice
+ Copyright   : This code is based upon / borrows from Copyright (C) 2019 Michael Kerrisk,
+               though earlier versions can be found on the web.
  Description : This program will copy a file using memory mapped IO.
  ============================================================================
  */
@@ -31,10 +32,10 @@ int main(int argc, char *argv[])
     int fdSrc, fdDst;
     struct stat sb;
 
-	// Check the usage provided by the user of the program.
+	// Check the usage provided by the user of the program.  Must have 3 parameters.
     if (argc != 3)
 	{
-        fprintf(stderr, "%s source-file dest-file\n", argv[0]);
+        printf("%s source-file dest-file\n", argv[0]);
 		exit(-1);
 	}
 
@@ -45,30 +46,34 @@ int main(int argc, char *argv[])
         fprintf(stderr, "open failed.  Source file does not exist.\n");
 		exit(-1);
 	}
-    /* Use fstat() to obtain size of file: we use this to specify the
-       size of the two mappings */
+	
+    /* Use fstat() to obtain size of file: This will populate the buffer with file status information.
+	   If the return is -1, there is an error.	*/
     if (fstat(fdSrc, &sb) == -1)
 	{
         fprintf(stderr, "fstat could not read statistics about the file.");
 		exit(-1);
 	}
 
-    /* Handle zero-length file specially, since specifying a size of
-       zero to mmap() will fail with the error EINVAL */
+    /* A file that is of length 0 is a special file.  There is nothing to do as it is an empty file.	*/
     if (sb.st_size == 0)
 	{
 		exit(EXIT_SUCCESS);
 	}
 
 	// Create a shared location in memory that is the source.
+	// The material is to be private segment.  The page is only to be readable.
     src = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fdSrc, 0);
-    if (src == MAP_FAILED)
+    
+	// Make sure that the operation was successful.
+	if (src == MAP_FAILED)
 	{
 		fprintf(stderr, "mmap failed to create a shared partition");
 		exit(-1);
 	}
 
 	// Open the destination file for writing.
+	// The parameters are set accordingly.
     fdDst = open(argv[2], O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
     if (fdDst == -1)
 	{
@@ -76,6 +81,7 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 
+	// Limit the file to be exactly sb.st_size bytes in length.
     if (ftruncate(fdDst, sb.st_size) == -1)
 	{
 		fprintf(stderr, "ftruncate");
@@ -83,6 +89,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Map the destination file to point to a mapped segment of memory.
+	// By mapping it we can copy directly into the buffer.
     dst = mmap(NULL, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fdDst, 0);
     if (dst == MAP_FAILED)
 	{
@@ -91,18 +98,22 @@ int main(int argc, char *argv[])
 	}
 
 	// Copy the memory from the source to the destination.
-    memcpy(dst, src, sb.st_size);       /* Copy bytes between mappings */
+	// A memcpy will copy from one buffer to the other exactly sb.st_size bytes.
+    memcpy(dst, src, sb.st_size);       
 
+	// The msync will synchronize the file on disc with the memory map.
+	// The parameter MS_SYNC causes the task to block and wait until the update is completed.
 	if (msync(dst, sb.st_size, MS_SYNC) == -1)
 	{
 		fprintf(stderr, "msync");
 		exit(-1);
 	}
 
-	// Close the files.
+	// Close the files.  This will write the results out to disk.
 	close(fdSrc);
 	close(fdDst);
 
+	// Indicate to the user that the file copy is now completed.
 	printf("Copy of %d bytes from %s to %s is now completed.\n", sb.st_size,
 			argv[1], argv[2]);
 
